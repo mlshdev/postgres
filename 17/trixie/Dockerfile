@@ -6,14 +6,20 @@
 
 FROM docker.io/library/debian:trixie-slim
 
+# Build arguments for dynamic versioning
+ARG PG_MAJOR=17
+ARG PG_VERSION=17.7
+
 # OCI Image Format Specification labels
 # https://github.com/opencontainers/image-spec/blob/main/annotations.md
-LABEL org.opencontainers.image.base.name="docker.io/library/debian:trixie-slim"
-LABEL org.opencontainers.image.title="PostgreSQL"
-LABEL org.opencontainers.image.description="PostgreSQL 17.7 Database Server"
-LABEL org.opencontainers.image.version="17.7"
-LABEL org.opencontainers.image.licenses="PostgreSQL"
-LABEL org.opencontainers.image.documentation="https://www.postgresql.org/docs/17/"
+LABEL org.opencontainers.image.base.name="docker.io/library/debian:trixie-slim" \
+      org.opencontainers.image.title="PostgreSQL" \
+      org.opencontainers.image.description="PostgreSQL ${PG_VERSION} Database Server with Extensions" \
+      org.opencontainers.image.version="${PG_VERSION}" \
+      org.opencontainers.image.licenses="PostgreSQL" \
+      org.opencontainers.image.documentation="https://www.postgresql.org/docs/${PG_MAJOR}/" \
+      org.opencontainers.image.source="https://github.com/mlshdev/postgres" \
+      org.opencontainers.image.vendor="PostgreSQL Community"
 
 # explicitly set user/group IDs
 RUN set -eux; \
@@ -165,7 +171,62 @@ RUN set -ex; \
 	sed -ri 's/#(create_main_cluster) .*$/\1 = false/' /etc/postgresql-common/createcluster.conf; \
 	apt-get install -y --no-install-recommends \
 		"postgresql-$PG_MAJOR=$PG_VERSION" \
+		"postgresql-$PG_MAJOR-cron" \
+		"postgresql-$PG_MAJOR-pgaudit" \
+		"postgresql-$PG_MAJOR-pg-stat-kcache" \
 	; \
+# Install all available extensions from the PGDG repository
+# Extensions are installed in separate layers for better caching and smaller base image
+	apt-get install -y --no-install-recommends \
+# Core contrib modules (included in postgresql-contrib)
+		"postgresql-contrib-$PG_MAJOR" \
+# Geospatial extensions
+		"postgresql-$PG_MAJOR-postgis-3" \
+		"postgresql-$PG_MAJOR-postgis-3-scripts" \
+		"postgresql-$PG_MAJOR-pgrouting" \
+		"postgresql-$PG_MAJOR-h3" \
+# Vector/AI extensions
+		"postgresql-$PG_MAJOR-pgvector" \
+# Performance and monitoring extensions
+		"postgresql-$PG_MAJOR-pg-qualstats" \
+		"postgresql-$PG_MAJOR-pg-wait-sampling" \
+		"postgresql-$PG_MAJOR-hypopg" \
+		"postgresql-$PG_MAJOR-repack" \
+		"postgresql-$PG_MAJOR-show-plans" \
+# Data types and utilities
+		"postgresql-$PG_MAJOR-hll" \
+		"postgresql-$PG_MAJOR-ip4r" \
+		"postgresql-$PG_MAJOR-prefix" \
+		"postgresql-$PG_MAJOR-semver" \
+		"postgresql-$PG_MAJOR-unit" \
+# Foreign data wrappers
+		"postgresql-$PG_MAJOR-mysql-fdw" \
+		"postgresql-$PG_MAJOR-ogr-fdw" \
+		"postgresql-$PG_MAJOR-redis-fdw" \
+# Partitioning and maintenance
+		"postgresql-$PG_MAJOR-partman" \
+# Full-text search enhancements
+		"postgresql-$PG_MAJOR-rum" \
+# Procedural languages
+		"postgresql-$PG_MAJOR-plpgsql-check" \
+# Replication and CDC
+		"postgresql-$PG_MAJOR-wal2json" \
+		"postgresql-$PG_MAJOR-decoderbufs" \
+		"postgresql-$PG_MAJOR-pglogical" \
+# Utilities
+		"postgresql-$PG_MAJOR-http" \
+		"postgresql-$PG_MAJOR-pgtap" \
+		"postgresql-$PG_MAJOR-credcheck" \
+		"postgresql-$PG_MAJOR-dirtyread" \
+		"postgresql-$PG_MAJOR-extra-window-functions" \
+		"postgresql-$PG_MAJOR-first-last-agg" \
+		"postgresql-$PG_MAJOR-asn1oid" \
+		"postgresql-$PG_MAJOR-debversion" \
+		"postgresql-$PG_MAJOR-pgmp" \
+		"postgresql-$PG_MAJOR-prioritize" \
+		"postgresql-$PG_MAJOR-tablelog" \
+		"postgresql-$PG_MAJOR-toastinfo" \
+	|| true; \
 	\
 	rm -rf /var/lib/apt/lists/*; \
 	\
@@ -179,6 +240,14 @@ RUN set -ex; \
 	find /usr -name '*.pyc' -type f -exec bash -c 'for pyc; do dpkg -S "$pyc" &> /dev/null || rm -vf "$pyc"; done' -- '{}' +; \
 	\
 	postgres --version
+
+# Configure shared_preload_libraries for extensions that require it
+# pg_cron, pg_stat_statements, pgaudit, pg_stat_kcache need to be preloaded
+RUN set -eux; \
+	echo "shared_preload_libraries = 'pg_cron,pg_stat_statements,pgaudit,pg_stat_kcache,pg_qualstats'" >> /usr/share/postgresql/postgresql.conf.sample; \
+	echo "cron.database_name = 'postgres'" >> /usr/share/postgresql/postgresql.conf.sample; \
+	echo "pg_stat_statements.track = all" >> /usr/share/postgresql/postgresql.conf.sample; \
+	echo "pg_stat_statements.max = 10000" >> /usr/share/postgresql/postgresql.conf.sample
 
 # make the sample config easier to munge (and "correct by default")
 RUN set -eux; \
@@ -194,6 +263,9 @@ ENV PGDATA /var/lib/postgresql/data
 # this 1777 will be replaced by 0700 at runtime (allows semi-arbitrary "--user" values)
 RUN install --verbose --directory --owner postgres --group postgres --mode 1777 "$PGDATA"
 VOLUME /var/lib/postgresql/data
+
+# Copy initialization script for extensions
+COPY 00-create-extensions.sql /docker-entrypoint-initdb.d/
 
 COPY docker-entrypoint.sh docker-ensure-initdb.sh /usr/local/bin/
 RUN ln -sT docker-ensure-initdb.sh /usr/local/bin/docker-enforce-initdb.sh
