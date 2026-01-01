@@ -54,6 +54,6 @@ for version; do
 			gawk -f "$jqt" "$template"
 		} > "$dir/Dockerfile"
 
-		cp -a docker-entrypoint.sh docker-ensure-initdb.sh 00-create-extensions.sql "$dir/"
+		cp -a docker-entrypoint.sh docker-ensure-initdb.sh "$dir/"
 	done
 done

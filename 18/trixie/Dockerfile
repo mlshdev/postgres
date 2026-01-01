@@ -271,9 +271,6 @@ ENV PGDATA /var/lib/postgresql/18/docker
 VOLUME /var/lib/postgresql
 # ("/var/lib/postgresql" is already pre-created with suitably usable permissions above)
 
-# Copy initialization script for extensions
-COPY 00-create-extensions.sql /docker-entrypoint-initdb.d/
-
 COPY docker-entrypoint.sh docker-ensure-initdb.sh /usr/local/bin/
 RUN ln -sT docker-ensure-initdb.sh /usr/local/bin/docker-enforce-initdb.sh
 ENTRYPOINT ["docker-entrypoint.sh"]

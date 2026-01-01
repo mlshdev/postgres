@@ -159,12 +159,41 @@ pg_stat_statements.max = 10000
 
 ## Using Extensions
 
-Extensions are automatically created on first database initialization. To manually create an extension:
+Extensions are pre-installed and available for use but **not automatically created**. You need to create them manually or via your own initialization scripts.
+
+### Creating Extensions Manually
+
+Connect to your database and run:
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS pgvector;
 CREATE EXTENSION IF NOT EXISTS postgis;
 CREATE EXTENSION IF NOT EXISTS pg_cron;
+```
+
+### Creating Extensions via Init Script
+
+You can add your own SQL scripts to `/docker-entrypoint-initdb.d/` directory:
+
+```dockerfile
+# In your Dockerfile
+COPY my-extensions.sql /docker-entrypoint-initdb.d/
+```
+
+Or mount a volume:
+
+```yaml
+# In docker-compose.yml
+volumes:
+  - ./init-scripts:/docker-entrypoint-initdb.d
+```
+
+### Available Extensions
+
+To see all available extensions in your database, run:
+
+```sql
+SELECT * FROM pg_available_extensions ORDER BY name;
 ```
 
 ## Architecture
@@ -179,8 +208,6 @@ graph TB
         F[Dockerfile-debian.template] -->|template for| C
         G[docker-entrypoint.sh] -->|copied to| D
         G -->|copied to| E
-        H[00-create-extensions.sql] -->|copied to| D
-        H -->|copied to| E
     end
 ```
 
@@ -214,7 +241,6 @@ graph LR
         D[Dockerfile-debian.template]
         E[docker-entrypoint.sh]
         F[docker-ensure-initdb.sh]
-        G[00-create-extensions.sql]
         H[generate-stackbrew-library.sh]
     end
     
@@ -222,14 +248,12 @@ graph LR
         I[Dockerfile]
         J[docker-entrypoint.sh]
         K[docker-ensure-initdb.sh]
-        L[00-create-extensions.sql]
     end
     
     subgraph "18/trixie"
         M[Dockerfile]
         N[docker-entrypoint.sh]
         O[docker-ensure-initdb.sh]
-        P[00-create-extensions.sql]
     end
     
     subgraph ".github/workflows"
