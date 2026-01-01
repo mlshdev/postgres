@@ -226,7 +226,7 @@ RUN set -ex; \
 		"postgresql-$PG_MAJOR-prioritize" \
 		"postgresql-$PG_MAJOR-tablelog" \
 		"postgresql-$PG_MAJOR-toastinfo" \
-	|| true; \
+	|| echo "Note: Some optional extensions may not be available for this architecture/version"; \
 # https://github.com/docker-library/postgres/pull/1344#issuecomment-2936578203 (JIT is a separate package in 18+, but only supported for a subset of architectures)
 	if apt-get install -s "postgresql-$PG_MAJOR-jit" > /dev/null 2>&1; then \
 		apt-get install -y --no-install-recommends "postgresql-$PG_MAJOR-jit=$PG_VERSION"; \

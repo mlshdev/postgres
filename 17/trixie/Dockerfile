@@ -226,7 +226,7 @@ RUN set -ex; \
 		"postgresql-$PG_MAJOR-prioritize" \
 		"postgresql-$PG_MAJOR-tablelog" \
 		"postgresql-$PG_MAJOR-toastinfo" \
-	|| true; \
+	|| echo "Note: Some optional extensions may not be available for this architecture/version"; \
 	\
 	rm -rf /var/lib/apt/lists/*; \
 	\
