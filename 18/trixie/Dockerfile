@@ -43,7 +43,7 @@ RUN set -ex; \
 
 # grab gosu for easy step-down from root
 # https://github.com/tianon/gosu/releases
-ENV GOSU_VERSION 1.19
+ENV GOSU_VERSION=1.19
 RUN set -eux; \
 	savedAptMark="$(apt-mark showmanual)"; \
 	apt-get update; \
@@ -76,7 +76,7 @@ RUN set -eux; \
 	echo 'en_US.UTF-8 UTF-8' >> /etc/locale.gen; \
 	locale-gen; \
 	locale -a | grep 'en_US.utf8'
-ENV LANG en_US.utf8
+ENV LANG=en_US.utf8
 
 RUN set -eux; \
 	apt-get update; \
@@ -101,10 +101,10 @@ RUN set -ex; \
 	gpgconf --kill all; \
 	rm -rf "$GNUPGHOME"
 
-ENV PG_MAJOR 18
-ENV PATH $PATH:/usr/lib/postgresql/$PG_MAJOR/bin
+ENV PG_MAJOR=18
+ENV PATH=$PATH:/usr/lib/postgresql/$PG_MAJOR/bin
 
-ENV PG_VERSION 18.1-1.pgdg13+2
+ENV PG_VERSION=18.1-1.pgdg13+2
 
 RUN set -ex; \
 	\
@@ -202,7 +202,6 @@ RUN set -ex; \
 # Foreign data wrappers
 		"postgresql-$PG_MAJOR-mysql-fdw" \
 		"postgresql-$PG_MAJOR-ogr-fdw" \
-		"postgresql-$PG_MAJOR-redis-fdw" \
 # Partitioning and maintenance
 		"postgresql-$PG_MAJOR-partman" \
 # Full-text search enhancements
@@ -226,7 +225,7 @@ RUN set -ex; \
 		"postgresql-$PG_MAJOR-prioritize" \
 		"postgresql-$PG_MAJOR-tablelog" \
 		"postgresql-$PG_MAJOR-toastinfo" \
-	|| echo "Note: Some optional extensions may not be available for this architecture/version"; \
+	; \
 # https://github.com/docker-library/postgres/pull/1344#issuecomment-2936578203 (JIT is a separate package in 18+, but only supported for a subset of architectures)
 	if apt-get install -s "postgresql-$PG_MAJOR-jit" > /dev/null 2>&1; then \
 		apt-get install -y --no-install-recommends "postgresql-$PG_MAJOR-jit=$PG_VERSION"; \
@@ -267,7 +266,7 @@ RUN install --verbose --directory --owner postgres --group postgres --mode 3777 
 #
 # NOTE: in 18+, PGDATA has changed to match the pg_ctlcluster standard directory structure, and the VOLUME has moved from /var/lib/postgresql/data to /var/lib/postgresql
 #
-ENV PGDATA /var/lib/postgresql/18/docker
+ENV PGDATA=/var/lib/postgresql/18/docker
 VOLUME /var/lib/postgresql
 # ("/var/lib/postgresql" is already pre-created with suitably usable permissions above)
 
