@@ -1,4 +1,19 @@
-FROM debian:{{ env.variant }}-slim
+FROM docker.io/library/debian:trixie-slim
+
+# Build arguments for dynamic versioning
+ARG PG_MAJOR={{ env.version }}
+ARG PG_VERSION={{ .version }}
+
+# OCI Image Format Specification labels
+# https://github.com/opencontainers/image-spec/blob/main/annotations.md
+LABEL org.opencontainers.image.base.name="docker.io/library/debian:trixie-slim" \
+      org.opencontainers.image.title="PostgreSQL" \
+      org.opencontainers.image.description="PostgreSQL ${PG_VERSION} Database Server with Extensions" \
+      org.opencontainers.image.version="${PG_VERSION}" \
+      org.opencontainers.image.licenses="PostgreSQL" \
+      org.opencontainers.image.documentation="https://www.postgresql.org/docs/${PG_MAJOR}/" \
+      org.opencontainers.image.source="https://github.com/mlshdev/postgres" \
+      org.opencontainers.image.vendor="PostgreSQL Community"
 
 # explicitly set user/group IDs
 RUN set -eux; \
@@ -94,7 +109,7 @@ RUN set -ex; \
 	aptRepo="[ signed-by=/usr/local/share/keyrings/postgres.gpg.asc ] http://apt.postgresql.org/pub/repos/apt {{ env.variant }}-pgdg main $PG_MAJOR"; \
 	case "$dpkgArch" in \
 		{{ .[env.variant].arches | join(" | ") }}) \
-# arches officialy built by upstream
+# arches officially built by upstream
 			echo "deb $aptRepo" > /etc/apt/sources.list.d/pgdg.list; \
 			apt-get update; \
 			;; \
@@ -150,7 +165,62 @@ RUN set -ex; \
 	sed -ri 's/#(create_main_cluster) .*$/\1 = false/' /etc/postgresql-common/createcluster.conf; \
 	apt-get install -y --no-install-recommends \
 		"postgresql-$PG_MAJOR=$PG_VERSION" \
+		"postgresql-$PG_MAJOR-cron" \
+		"postgresql-$PG_MAJOR-pgaudit" \
+		"postgresql-$PG_MAJOR-pg-stat-kcache" \
 	; \
+# Install all available extensions from the PGDG repository
+# Extensions are installed in separate layers for better caching and smaller base image
+	apt-get install -y --no-install-recommends \
+# Core contrib modules (included in postgresql-contrib)
+		"postgresql-contrib-$PG_MAJOR" \
+# Geospatial extensions
+		"postgresql-$PG_MAJOR-postgis-3" \
+		"postgresql-$PG_MAJOR-postgis-3-scripts" \
+		"postgresql-$PG_MAJOR-pgrouting" \
+		"postgresql-$PG_MAJOR-h3" \
+# Vector/AI extensions
+		"postgresql-$PG_MAJOR-pgvector" \
+# Performance and monitoring extensions
+		"postgresql-$PG_MAJOR-pg-qualstats" \
+		"postgresql-$PG_MAJOR-pg-wait-sampling" \
+		"postgresql-$PG_MAJOR-hypopg" \
+		"postgresql-$PG_MAJOR-repack" \
+		"postgresql-$PG_MAJOR-show-plans" \
+# Data types and utilities
+		"postgresql-$PG_MAJOR-hll" \
+		"postgresql-$PG_MAJOR-ip4r" \
+		"postgresql-$PG_MAJOR-prefix" \
+		"postgresql-$PG_MAJOR-semver" \
+		"postgresql-$PG_MAJOR-unit" \
+# Foreign data wrappers
+		"postgresql-$PG_MAJOR-mysql-fdw" \
+		"postgresql-$PG_MAJOR-ogr-fdw" \
+		"postgresql-$PG_MAJOR-redis-fdw" \
+# Partitioning and maintenance
+		"postgresql-$PG_MAJOR-partman" \
+# Full-text search enhancements
+		"postgresql-$PG_MAJOR-rum" \
+# Procedural languages
+		"postgresql-$PG_MAJOR-plpgsql-check" \
+# Replication and CDC
+		"postgresql-$PG_MAJOR-wal2json" \
+		"postgresql-$PG_MAJOR-decoderbufs" \
+		"postgresql-$PG_MAJOR-pglogical" \
+# Utilities
+		"postgresql-$PG_MAJOR-http" \
+		"postgresql-$PG_MAJOR-pgtap" \
+		"postgresql-$PG_MAJOR-credcheck" \
+		"postgresql-$PG_MAJOR-dirtyread" \
+		"postgresql-$PG_MAJOR-extra-window-functions" \
+		"postgresql-$PG_MAJOR-first-last-agg" \
+		"postgresql-$PG_MAJOR-asn1oid" \
+		"postgresql-$PG_MAJOR-debversion" \
+		"postgresql-$PG_MAJOR-pgmp" \
+		"postgresql-$PG_MAJOR-prioritize" \
+		"postgresql-$PG_MAJOR-tablelog" \
+		"postgresql-$PG_MAJOR-toastinfo" \
+	|| echo "Note: Some optional extensions may not be available for this architecture/version"; \
 {{ if .major >= 18 then ( -}}
 # https://github.com/docker-library/postgres/pull/1344#issuecomment-2936578203 (JIT is a separate package in 18+, but only supported for a subset of architectures)
 	if apt-get install -s "postgresql-$PG_MAJOR-jit" > /dev/null 2>&1; then \
@@ -171,6 +241,14 @@ RUN set -ex; \
 	\
 	postgres --version
 
+# Configure shared_preload_libraries for extensions that require it
+# pg_cron, pg_stat_statements, pgaudit, pg_stat_kcache need to be preloaded
+RUN set -eux; \
+	echo "shared_preload_libraries = 'pg_cron,pg_stat_statements,pgaudit,pg_stat_kcache,pg_qualstats'" >> /usr/share/postgresql/postgresql.conf.sample; \
+	echo "cron.database_name = 'postgres'" >> /usr/share/postgresql/postgresql.conf.sample; \
+	echo "pg_stat_statements.track = all" >> /usr/share/postgresql/postgresql.conf.sample; \
+	echo "pg_stat_statements.max = 10000" >> /usr/share/postgresql/postgresql.conf.sample
+
 # make the sample config easier to munge (and "correct by default")
 RUN set -eux; \
 	dpkg-divert --add --rename --divert "/usr/share/postgresql/postgresql.conf.sample.dpkg" "/usr/share/postgresql/$PG_MAJOR/postgresql.conf.sample"; \
@@ -182,6 +260,7 @@ RUN set -eux; \
 RUN install --verbose --directory --owner postgres --group postgres --mode 3777 /var/run/postgresql
 
 {{ if .major >= 18 then ( -}}
+#
 #
 # NOTE: in 18+, PGDATA has changed to match the pg_ctlcluster standard directory structure, and the VOLUME has moved from /var/lib/postgresql/data to /var/lib/postgresql
 #

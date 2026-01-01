@@ -81,7 +81,6 @@ for version; do
 	variants="$(jq -r '.[env.version].variants | map(@sh) | join(" ")' versions.json)"
 	eval "variants=( $variants )"
 
-	alpine="$(jq -r '.[env.version].alpine' versions.json)"
 	debian="$(jq -r '.[env.version].debian' versions.json)"
 
 	fullVersion="$(jq -r '.[env.version].version' versions.json)"
@@ -117,10 +116,6 @@ for version; do
 					"${versionAliases[@]}"
 					"${variantAliases[@]}"
 				)
-				;;
-			alpine"$alpine")
-				variantAliases+=( "${versionAliases[@]/%/-alpine}" )
-				variantAliases=( "${variantAliases[@]//latest-/}" )
 				;;
 		esac
 

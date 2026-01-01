@@ -1,0 +1,331 @@
+name: Build and Publish PostgreSQL Images
+
+on:
+  workflow_dispatch:
+    inputs:
+      pg_version:
+        description: 'PostgreSQL major version to build (17 or 18, or "all" for both)'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - 'all'
+          - '17'
+          - '18'
+
+# Permissions required for the workflow
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  attestations: write
+
+env:
+  GHCR_REGISTRY: ghcr.io
+  DOCKERHUB_REGISTRY: docker.io
+  QUAY_REGISTRY: quay.io
+
+jobs:
+  # Pre-check authentication to all registries before starting builds
+  auth-check:
+    name: Verify Registry Authentication
+    runs-on: ubuntu-latest
+    steps:
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.GHCR_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.DOCKERHUB_REGISTRY }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to Quay.io
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.QUAY_REGISTRY }}
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
+
+      - name: Authentication verified
+        run: echo "All registry authentications successful"
+
+  # Generate build matrix from versions.json
+  prepare:
+    name: Prepare Build Matrix
+    runs-on: ubuntu-latest
+    needs: auth-check
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate build matrix
+        id: set-matrix
+        run: |
+          if [ "${{ inputs.pg_version }}" = "all" ]; then
+            VERSIONS=$(jq -r 'keys | @json' versions.json)
+          else
+            VERSIONS='["${{ inputs.pg_version }}"]'
+          fi
+
+          MATRIX=$(jq -n \
+            --argjson versions "$VERSIONS" \
+            --argjson platforms '["linux/amd64", "linux/arm64"]' \
+            '{
+              include: [
+                ($versions[] | . as $ver | {
+                  pg_version: $ver,
+                  platform: "linux/amd64",
+                  runner: "ubuntu-latest"
+                }),
+                ($versions[] | . as $ver | {
+                  pg_version: $ver,
+                  platform: "linux/arm64",
+                  runner: "ubuntu-24.04-arm"
+                })
+              ]
+            }')
+
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+          echo "Generated matrix:"
+          echo "$MATRIX" | jq .
+
+  # Build images for each platform natively
+  build:
+    name: Build ${{ matrix.pg_version }} (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    outputs:
+      pg17_amd64_digest: ${{ steps.build.outputs.pg17_amd64_digest }}
+      pg17_arm64_digest: ${{ steps.build.outputs.pg17_arm64_digest }}
+      pg18_amd64_digest: ${{ steps.build.outputs.pg18_amd64_digest }}
+      pg18_arm64_digest: ${{ steps.build.outputs.pg18_arm64_digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get PostgreSQL version info
+        id: version
+        run: |
+          PG_FULL_VERSION=$(jq -r '.["${{ matrix.pg_version }}"].version' versions.json)
+          PG_MAJOR=${{ matrix.pg_version }}
+          VARIANT=$(jq -r '.["${{ matrix.pg_version }}"].debian' versions.json)
+          echo "pg_full_version=$PG_FULL_VERSION" >> "$GITHUB_OUTPUT"
+          echo "pg_major=$PG_MAJOR" >> "$GITHUB_OUTPUT"
+          echo "variant=$VARIANT" >> "$GITHUB_OUTPUT"
+          echo "context=$PG_MAJOR/$VARIANT" >> "$GITHUB_OUTPUT"
+
+          # Create platform-safe tag suffix
+          PLATFORM_TAG=$(echo "${{ matrix.platform }}" | tr '/' '-')
+          echo "platform_tag=$PLATFORM_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.GHCR_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.DOCKERHUB_REGISTRY }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to Quay.io
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.QUAY_REGISTRY }}
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.GHCR_REGISTRY }}/${{ github.repository_owner }}/postgres
+            ${{ env.DOCKERHUB_REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/postgres
+            ${{ env.QUAY_REGISTRY }}/${{ secrets.QUAY_USERNAME }}/postgres
+          tags: |
+            type=raw,value=${{ steps.version.outputs.pg_full_version }}-${{ steps.version.outputs.platform_tag }}
+            type=raw,value=${{ steps.version.outputs.pg_major }}-${{ steps.version.outputs.platform_tag }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ steps.version.outputs.context }}
+          platforms: ${{ matrix.platform }}
+          labels: |
+            org.opencontainers.image.title=PostgreSQL
+            org.opencontainers.image.description=PostgreSQL ${{ steps.version.outputs.pg_full_version }} on Debian Trixie
+            org.opencontainers.image.version=${{ steps.version.outputs.pg_full_version }}
+            org.opencontainers.image.vendor=${{ github.repository_owner }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.licenses=PostgreSQL
+          outputs: |
+            type=image,name=${{ env.GHCR_REGISTRY }}/${{ github.repository_owner }}/postgres,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=registry,ref=${{ env.GHCR_REGISTRY }}/${{ github.repository_owner }}/postgres:buildcache-${{ matrix.pg_version }}-${{ steps.version.outputs.platform_tag }}
+          cache-to: type=registry,ref=${{ env.GHCR_REGISTRY }}/${{ github.repository_owner }}/postgres:buildcache-${{ matrix.pg_version }}-${{ steps.version.outputs.platform_tag }},mode=max
+          provenance: true
+          sbom: true
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests/${{ matrix.pg_version }}
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${{ matrix.pg_version }}/${digest#sha256:}"
+          echo "Digest for ${{ matrix.pg_version }} on ${{ matrix.platform }}: $digest"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.pg_version }}-${{ steps.version.outputs.platform_tag }}
+          path: /tmp/digests/${{ matrix.pg_version }}
+          if-no-files-found: error
+          retention-days: 1
+
+  # Create and push multi-arch manifests
+  manifest:
+    name: Create Manifest for PostgreSQL ${{ matrix.pg_version }}
+    runs-on: ubuntu-latest
+    needs: [prepare, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        pg_version: ${{ fromJson(inputs.pg_version == 'all' && '["17", "18"]' || format('["{0}"]', inputs.pg_version)) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get PostgreSQL version info
+        id: version
+        run: |
+          PG_FULL_VERSION=$(jq -r '.["${{ matrix.pg_version }}"].version' versions.json)
+          PG_MAJOR=${{ matrix.pg_version }}
+          echo "pg_full_version=$PG_FULL_VERSION" >> "$GITHUB_OUTPUT"
+          echo "pg_major=$PG_MAJOR" >> "$GITHUB_OUTPUT"
+
+          # Check if this is the latest version (18)
+          LATEST_VERSION=$(jq -r 'keys | sort | last' versions.json)
+          if [ "$PG_MAJOR" = "$LATEST_VERSION" ]; then
+            echo "is_latest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_latest=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          pattern: digests-${{ matrix.pg_version }}-*
+          path: /tmp/digests
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.GHCR_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.DOCKERHUB_REGISTRY }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to Quay.io
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.QUAY_REGISTRY }}
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
+
+      - name: Create manifest list and push to GHCR
+        working-directory: /tmp/digests
+        run: |
+          # Build tag list
+          TAGS="-t ${{ env.GHCR_REGISTRY }}/${{ github.repository_owner }}/postgres:${{ steps.version.outputs.pg_full_version }}"
+          TAGS="$TAGS -t ${{ env.GHCR_REGISTRY }}/${{ github.repository_owner }}/postgres:${{ steps.version.outputs.pg_major }}"
+          TAGS="$TAGS -t ${{ env.GHCR_REGISTRY }}/${{ github.repository_owner }}/postgres:${{ steps.version.outputs.pg_full_version }}-trixie"
+          TAGS="$TAGS -t ${{ env.GHCR_REGISTRY }}/${{ github.repository_owner }}/postgres:${{ steps.version.outputs.pg_major }}-trixie"
+
+          if [ "${{ steps.version.outputs.is_latest }}" = "true" ]; then
+            TAGS="$TAGS -t ${{ env.GHCR_REGISTRY }}/${{ github.repository_owner }}/postgres:latest"
+            TAGS="$TAGS -t ${{ env.GHCR_REGISTRY }}/${{ github.repository_owner }}/postgres:trixie"
+          fi
+
+          docker buildx imagetools create $TAGS \
+            $(printf '${{ env.GHCR_REGISTRY }}/${{ github.repository_owner }}/postgres@sha256:%s ' *)
+
+      - name: Create manifest list and push to DockerHub
+        working-directory: /tmp/digests
+        run: |
+          # First push the individual platform images to DockerHub
+          for digest in *; do
+            docker buildx imagetools create \
+              -t ${{ env.DOCKERHUB_REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/postgres:temp-${digest} \
+              ${{ env.GHCR_REGISTRY }}/${{ github.repository_owner }}/postgres@sha256:${digest}
+          done
+
+          # Build tag list for DockerHub
+          TAGS="-t ${{ env.DOCKERHUB_REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/postgres:${{ steps.version.outputs.pg_full_version }}"
+          TAGS="$TAGS -t ${{ env.DOCKERHUB_REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/postgres:${{ steps.version.outputs.pg_major }}"
+          TAGS="$TAGS -t ${{ env.DOCKERHUB_REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/postgres:${{ steps.version.outputs.pg_full_version }}-trixie"
+          TAGS="$TAGS -t ${{ env.DOCKERHUB_REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/postgres:${{ steps.version.outputs.pg_major }}-trixie"
+
+          if [ "${{ steps.version.outputs.is_latest }}" = "true" ]; then
+            TAGS="$TAGS -t ${{ env.DOCKERHUB_REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/postgres:latest"
+            TAGS="$TAGS -t ${{ env.DOCKERHUB_REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/postgres:trixie"
+          fi
+
+          docker buildx imagetools create $TAGS \
+            $(printf '${{ env.GHCR_REGISTRY }}/${{ github.repository_owner }}/postgres@sha256:%s ' *)
+
+      - name: Create manifest list and push to Quay.io
+        working-directory: /tmp/digests
+        run: |
+          # Build tag list for Quay.io
+          TAGS="-t ${{ env.QUAY_REGISTRY }}/${{ secrets.QUAY_USERNAME }}/postgres:${{ steps.version.outputs.pg_full_version }}"
+          TAGS="$TAGS -t ${{ env.QUAY_REGISTRY }}/${{ secrets.QUAY_USERNAME }}/postgres:${{ steps.version.outputs.pg_major }}"
+          TAGS="$TAGS -t ${{ env.QUAY_REGISTRY }}/${{ secrets.QUAY_USERNAME }}/postgres:${{ steps.version.outputs.pg_full_version }}-trixie"
+          TAGS="$TAGS -t ${{ env.QUAY_REGISTRY }}/${{ secrets.QUAY_USERNAME }}/postgres:${{ steps.version.outputs.pg_major }}-trixie"
+
+          if [ "${{ steps.version.outputs.is_latest }}" = "true" ]; then
+            TAGS="$TAGS -t ${{ env.QUAY_REGISTRY }}/${{ secrets.QUAY_USERNAME }}/postgres:latest"
+            TAGS="$TAGS -t ${{ env.QUAY_REGISTRY }}/${{ secrets.QUAY_USERNAME }}/postgres:trixie"
+          fi
+
+          docker buildx imagetools create $TAGS \
+            $(printf '${{ env.GHCR_REGISTRY }}/${{ github.repository_owner }}/postgres@sha256:%s ' *)
+
+      - name: Inspect manifests
+        run: |
+          echo "=== GHCR Manifest ==="
+          docker buildx imagetools inspect ${{ env.GHCR_REGISTRY }}/${{ github.repository_owner }}/postgres:${{ steps.version.outputs.pg_full_version }}
+
+          echo "=== DockerHub Manifest ==="
+          docker buildx imagetools inspect ${{ env.DOCKERHUB_REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/postgres:${{ steps.version.outputs.pg_full_version }}
+
+          echo "=== Quay.io Manifest ==="
+          docker buildx imagetools inspect ${{ env.QUAY_REGISTRY }}/${{ secrets.QUAY_USERNAME }}/postgres:${{ steps.version.outputs.pg_full_version }}

@@ -47,14 +47,7 @@ for version; do
 
 		echo "processing $dir ..."
 
-		case "$variant" in
-			alpine*)
-				template='Dockerfile-alpine.template'
-				;;
-			*)
-				template='Dockerfile-debian.template'
-				;;
-		esac
+		template='Dockerfile-debian.template'
 
 		{
 			generated_warning

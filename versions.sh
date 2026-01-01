@@ -1,21 +1,12 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# we will support at most two entries in each of these lists, and both should be in descending order
+# Only support trixie for debian
 supportedDebianSuites=(
 	trixie
-	bookworm
-)
-supportedAlpineVersions=(
-	3.23
-	3.22
 )
 defaultDebianSuite="${supportedDebianSuites[0]}"
 declare -A debianSuites=(
-)
-defaultAlpineVersion="${supportedAlpineVersions[0]}"
-declare -A alpineVersions=(
-	#[14]='3.16'
 )
 
 cd "$(dirname "$(readlink -f "$BASH_SOURCE")")"
@@ -79,12 +70,10 @@ fetch_suite_arches() {
 for version in "${versions[@]}"; do
 	export version
 
-	versionAlpineVersion="${alpineVersions[$version]:-$defaultAlpineVersion}"
 	versionDebianSuite="${debianSuites[$version]:-$defaultDebianSuite}"
-	export versionAlpineVersion versionDebianSuite
+	export versionDebianSuite
 
 	doc="$(jq -nc '{
-		alpine: env.versionAlpineVersion,
 		debian: env.versionDebianSuite,
 	}')"
 
@@ -105,9 +94,9 @@ for version in "${versions[@]}"; do
 			continue
 		fi
 
+		# Only support amd64 and arm64
 		versionArches='[]'
-		fetch_suite_arches "$suite"
-		for arch in ${suiteArches["$suite"]}; do
+		for arch in amd64 arm64; do
 			fetch_suite_package_list "$suite" "$version" "$arch"
 			archVersion="$(awk_package_list "$suite" "$version" "$arch" '
 				$1 == "Package" { pkg = $2 }
@@ -125,12 +114,6 @@ for version in "${versions[@]}"; do
 				arches: $arches,
 			}
 			| .variants += [ env.suite ]
-		')"
-	done
-
-	for alpineVersion in "${supportedAlpineVersions[@]}"; do
-		doc="$(jq <<<"$doc" -c --arg v "$alpineVersion" '
-			.variants += [ "alpine" + $v ]
 		')"
 	done
 
