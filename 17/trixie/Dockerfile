@@ -109,7 +109,7 @@ RUN set -ex; \
 	aptRepo="[ signed-by=/usr/local/share/keyrings/postgres.gpg.asc ] http://apt.postgresql.org/pub/repos/apt trixie-pgdg main $PG_MAJOR"; \
 	case "$dpkgArch" in \
 		amd64 | arm64) \
-# arches officialy built by upstream
+# arches officially built by upstream
 			echo "deb $aptRepo" > /etc/apt/sources.list.d/pgdg.list; \
 			apt-get update; \
 			;; \
