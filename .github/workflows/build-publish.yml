@@ -75,7 +75,7 @@ jobs:
             VERSIONS='["${{ inputs.pg_version }}"]'
           fi
 
-          MATRIX=$(jq -n \
+          MATRIX=$(jq -cn \
             --argjson versions "$VERSIONS" \
             --argjson platforms '["linux/amd64", "linux/arm64"]' \
             '{
