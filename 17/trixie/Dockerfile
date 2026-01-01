@@ -43,7 +43,7 @@ RUN set -ex; \
 
 # grab gosu for easy step-down from root
 # https://github.com/tianon/gosu/releases
-ENV GOSU_VERSION 1.19
+ENV GOSU_VERSION=1.19
 RUN set -eux; \
 	savedAptMark="$(apt-mark showmanual)"; \
 	apt-get update; \
@@ -76,7 +76,7 @@ RUN set -eux; \
 	echo 'en_US.UTF-8 UTF-8' >> /etc/locale.gen; \
 	locale-gen; \
 	locale -a | grep 'en_US.utf8'
-ENV LANG en_US.utf8
+ENV LANG=en_US.utf8
 
 RUN set -eux; \
 	apt-get update; \
@@ -101,10 +101,10 @@ RUN set -ex; \
 	gpgconf --kill all; \
 	rm -rf "$GNUPGHOME"
 
-ENV PG_MAJOR 17
-ENV PATH $PATH:/usr/lib/postgresql/$PG_MAJOR/bin
+ENV PG_MAJOR=17
+ENV PATH=$PATH:/usr/lib/postgresql/$PG_MAJOR/bin
 
-ENV PG_VERSION 17.7-3.pgdg13+1
+ENV PG_VERSION=17.7-3.pgdg13+1
 
 RUN set -ex; \
 	\
@@ -202,7 +202,6 @@ RUN set -ex; \
 # Foreign data wrappers
 		"postgresql-$PG_MAJOR-mysql-fdw" \
 		"postgresql-$PG_MAJOR-ogr-fdw" \
-		"postgresql-$PG_MAJOR-redis-fdw" \
 # Partitioning and maintenance
 		"postgresql-$PG_MAJOR-partman" \
 # Full-text search enhancements
@@ -226,7 +225,7 @@ RUN set -ex; \
 		"postgresql-$PG_MAJOR-prioritize" \
 		"postgresql-$PG_MAJOR-tablelog" \
 		"postgresql-$PG_MAJOR-toastinfo" \
-	|| echo "Note: Some optional extensions may not be available for this architecture/version"; \
+	; \
 	\
 	rm -rf /var/lib/apt/lists/*; \
 	\
@@ -259,7 +258,7 @@ RUN set -eux; \
 
 RUN install --verbose --directory --owner postgres --group postgres --mode 3777 /var/run/postgresql
 
-ENV PGDATA /var/lib/postgresql/data
+ENV PGDATA=/var/lib/postgresql/data
 # this 1777 will be replaced by 0700 at runtime (allows semi-arbitrary "--user" values)
 RUN install --verbose --directory --owner postgres --group postgres --mode 1777 "$PGDATA"
 VOLUME /var/lib/postgresql/data
